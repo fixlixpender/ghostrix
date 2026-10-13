@@ -184,6 +184,17 @@ class Memory:
             self.db.execute("UPDATE sessions SET ended_at = ? WHERE id = ?", (time.time(), session_id))
         return summary_id
 
+    def end_session_empty(self, session_id: int) -> None:
+        """Close a session that has no messages. No summary is created."""
+        self._require_open(session_id)
+        count = self.db.execute(
+            "SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)
+        ).fetchone()[0]
+        if count:
+            raise ValueError("session has messages; use end_session with a summary")
+        with self.db:
+            self.db.execute("UPDATE sessions SET ended_at = ? WHERE id = ?", (time.time(), session_id))
+
     def sources_of(self, summary_id: int) -> tuple[int, ...]:
         rows = self.db.execute(
             "SELECT message_id FROM summary_sources WHERE summary_id = ? ORDER BY message_id",
