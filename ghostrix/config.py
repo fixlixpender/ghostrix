@@ -1,7 +1,7 @@
 """Config: defaults plus an optional TOML file. Unknown keys are errors.
 
-Model names are defaults, not decisions. The brief fixes Qwen3 as the chat
-model; the embedding model is still a proposal.
+Model names are defaults. Chat model: Qwen3 (fixed in the brief).
+Embedding model: nomic-embed-text (decided by Fil, 2026-10-13).
 """
 
 from __future__ import annotations

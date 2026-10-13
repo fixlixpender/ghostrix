@@ -14,7 +14,7 @@ Status: early build. Built and tested without a model: the memory core, characte
 ## Character, config, prompt
 
 - `examples/character.example.toml` is a character file: name, identity, system prompt.
-- `ghostrix/config.py` holds defaults (Qwen3 8B chat model, embedding model proposal). Unknown keys are errors.
+- `ghostrix/config.py` holds defaults (Qwen3 8B chat model, embedding model nomic-embed-text). Unknown keys are errors.
 - `ghostrix/prompt.py` builds the system prompt from character, accepted profile, and memories, within a character budget.
 
 ## Install check
