@@ -24,7 +24,7 @@ from pathlib import Path
 from ghostrix.character import Character
 from ghostrix.companion import Companion
 from ghostrix.config import load_config
-from ghostrix.memory import Memory
+from ghostrix.memory import Memory, _STOPWORDS
 from ghostrix.ollama import OllamaClient
 from tests.test_memory import FACTS  # the same 20 facts the stub test uses
 
@@ -51,20 +51,30 @@ def _has_word(text: str, word: str) -> bool:
     return re.search(r"(?<![a-z0-9])" + re.escape(word.lower()) + r"(?![a-z0-9])", text.lower()) is not None
 
 
-def cross_mixed_with(index: int, reply: str) -> str | None:
-    """Return the answer of another fact if the reply carries it in by mistake.
+def _content_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 3 and w not in _STOPWORDS}
 
-    A word counts as mixed-in only if it is not part of this fact's own statement or
-    question. Example: the spare-key reply may say "blue" because the fact says "blue pot".
-    Returns the other fact's expected answer, or None.
+
+def cross_mixed_with(index: int, reply: str) -> str | None:
+    """Return what the reply carries in from another fact, or None.
+
+    Two checks. First, another fact's expected answer appears in the reply ("twenty").
+    Second, a content word from another fact's statement appears ("five" from
+    "Phoebe turns five"). A word counts only if it is not in this fact's own statement
+    or question, so "blue" in the spare-key reply is not flagged.
+    Returns the offending word or answer, or None.
     """
     statement, question, _ = FACTS[index]
-    for j, (_s, _q, other_answer) in enumerate(FACTS):
+    own = _content_words(statement) | _content_words(question)
+    for j, (other_statement, _q, other_answer) in enumerate(FACTS):
         if j == index:
             continue
         for form in accepted_forms(other_answer):
             if _has_word(reply, form) and not _has_word(statement, form) and not _has_word(question, form):
                 return other_answer
+        for word in sorted(_content_words(other_statement) - own):
+            if _has_word(reply, word):
+                return word
     return None
 
 

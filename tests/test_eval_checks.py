@@ -41,6 +41,35 @@ class CrossMixingTests(unittest.TestCase):
         i = index_of("When is my birthday?")
         self.assertIsNone(cross_mixed_with(i, "September the twenty-seventh."))
 
+    def test_nancy_age_reply_taken_from_phoebe_is_flagged(self):
+        # "Phoebe turns five" is another fact's statement, so "five" is mixed in.
+        i = index_of("How old is Nancy?")
+        self.assertEqual(cross_mixed_with(i, "Five."), "five")
+
+    def test_all_clean_replies_from_latest_run_pass(self):
+        clean = {
+            "What is my dog called?": "Biscuit.",
+            "When does Phoebe turn five?": "March.",
+            "Where do I work in marketing?": "Rockwell.",
+            "What colour is the Volvo car?": "Green.",
+            "What is my favourite coffee?": "Double espresso.",
+            "On which night does the band rehearse?": "Thursday.",
+            "How many WordPress shops do I manage?": "Four.",
+            "Which guitar do I play?": "Your Gibson Les Paul.",
+            "What does Rebecca teach?": "English.",
+            "What colour is the front door?": "Blue.",
+            "Where does Madalena live?": "Porto.",
+            "What is the project codename?": "Lighthouse.",
+            "When did the office kettle break?": "June.",
+            "Which brand is the router?": "Netgear.",
+            "When did I quit smoking?": "April.",
+            "Which band songs does the cover band play?": "Nirvana.",
+            "Where is the spare key hidden?": "Under the blue pot.",
+        }
+        for question, reply in clean.items():
+            with self.subTest(question=question):
+                self.assertIsNone(cross_mixed_with(index_of(question), reply))
+
     def test_answer_still_detected_for_known_forms(self):
         self.assertTrue(contains_answer("Four.", "four"))
         self.assertTrue(contains_answer("About 27 September.", "twenty"))
