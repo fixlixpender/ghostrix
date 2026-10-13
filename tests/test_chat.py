@@ -69,7 +69,7 @@ class FakeOllama:
 class OllamaClientTests(unittest.TestCase):
     def setUp(self):
         self.fake = FakeOllama()
-        self.client = OllamaClient(self.fake.url, "qwen3:8b", "nomic-embed-text")
+        self.client = OllamaClient(self.fake.url, "qwen3:latest", "nomic-embed-text")
 
     def tearDown(self):
         self.fake.close()
@@ -82,7 +82,7 @@ class OllamaClientTests(unittest.TestCase):
         self.assertEqual(payload["messages"][0], {"role": "system", "content": "SYSTEM"})
         self.assertFalse(payload["think"])
         self.assertFalse(payload["stream"])
-        self.assertEqual(payload["model"], "qwen3:8b")
+        self.assertEqual(payload["model"], "qwen3:latest")
 
     def test_embed_uses_embedding_model(self):
         vec = self.client.embed("some text")
@@ -102,7 +102,7 @@ class CompanionTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.mem = Memory(os.path.join(self._tmp.name, "m.db"))
         self.fake = FakeOllama()
-        self.client = OllamaClient(self.fake.url, "qwen3:8b", "nomic-embed-text")
+        self.client = OllamaClient(self.fake.url, "qwen3:latest", "nomic-embed-text")
         self.comp = Companion(self.mem, self.client, CHARACTER)
 
     def tearDown(self):

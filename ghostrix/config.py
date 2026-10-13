@@ -13,7 +13,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Config:
-    chat_model: str = "qwen3:8b"
+    chat_model: str = "qwen3:latest"
     embedding_model: str = "nomic-embed-text"
     ollama_host: str = "http://127.0.0.1:11434"
     data_dir: str = "~/.ghostrix"

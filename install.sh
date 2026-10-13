@@ -3,7 +3,7 @@
 #
 # Environment overrides (for testing and custom setups):
 #   OLLAMA_BIN              path to the ollama binary (default: ollama)
-#   GHOSTRIX_CHAT_MODEL     default qwen3:8b
+#   GHOSTRIX_CHAT_MODEL     default qwen3:latest
 #   GHOSTRIX_EMBED_MODEL    default nomic-embed-text
 #
 # Flags:
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 OLLAMA_BIN="${OLLAMA_BIN:-ollama}"
-CHAT_MODEL="${GHOSTRIX_CHAT_MODEL:-qwen3:8b}"
+CHAT_MODEL="${GHOSTRIX_CHAT_MODEL:-qwen3:latest}"
 EMBED_MODEL="${GHOSTRIX_EMBED_MODEL:-nomic-embed-text}"
 DRY_RUN=0
 

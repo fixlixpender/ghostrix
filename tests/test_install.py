@@ -61,16 +61,16 @@ class InstallScriptTests(unittest.TestCase):
     def test_pulls_both_models_when_none_present(self):
         r = self.run_install(models="")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.pulls(), ["qwen3:8b", "nomic-embed-text"])
+        self.assertEqual(self.pulls(), ["qwen3:latest", "nomic-embed-text"])
 
     def test_skips_models_already_present(self):
-        r = self.run_install(models="qwen3:8b")
+        r = self.run_install(models="qwen3:latest")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.pulls(), ["nomic-embed-text"])
-        self.assertIn("ok: qwen3:8b already present", r.stdout)
+        self.assertIn("ok: qwen3:latest already present", r.stdout)
 
     def test_latest_tag_counts_as_present(self):
-        r = self.run_install(models="nomic-embed-text:latest qwen3:8b")
+        r = self.run_install(models="nomic-embed-text:latest qwen3:latest")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.pulls(), [])
 
@@ -78,7 +78,7 @@ class InstallScriptTests(unittest.TestCase):
         r = self.run_install(models="", args=("--dry-run",))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.pulls(), [])
-        self.assertIn("would pull: qwen3:8b", r.stdout)
+        self.assertIn("would pull: qwen3:latest", r.stdout)
 
     def test_missing_ollama_exits_1_with_hint(self):
         env = {**os.environ, "OLLAMA_BIN": os.path.join(self.dir, "no-such-binary")}
@@ -87,9 +87,9 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("Ollama not found", r.stderr)
 
     def test_failed_pull_exits_2(self):
-        r = self.run_install(models="", fail_model="qwen3:8b")
+        r = self.run_install(models="", fail_model="qwen3:latest")
         self.assertEqual(r.returncode, 2)
-        self.assertIn("failed to pull qwen3:8b", r.stderr)
+        self.assertIn("failed to pull qwen3:latest", r.stderr)
 
     def test_unknown_argument_rejected(self):
         r = self.run_install(args=("--yolo",))

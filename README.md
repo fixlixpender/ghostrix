@@ -19,7 +19,7 @@ Status: early build. Built and tested without a model: the memory core, characte
 
 ## Install check
 
-    ./install.sh             # checks Ollama, pulls qwen3:8b and nomic-embed-text if missing
+    ./install.sh             # checks Ollama, pulls qwen3:latest and nomic-embed-text if missing
     ./install.sh --dry-run   # shows what would happen
 
 ## Tests
