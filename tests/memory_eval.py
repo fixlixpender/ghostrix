@@ -104,8 +104,10 @@ def run(character_path: str, config_path: str | None, out_root: str | None) -> i
     companion = Companion(memory, client, character, retrieval_k=cfg.retrieval_k)
     rows = []
     for index, (_statement, question, answer) in enumerate(FACTS):
-        reply = companion.turn(question)
+        # Measure retrieval before the turn is logged, so the question and reply
+        # cannot push the real fact out of the top k.
         hits = memory.retrieve(question, k=cfg.retrieval_k)
+        reply = companion.turn(question)
         row = {
             "question": question,
             "expected": answer,
