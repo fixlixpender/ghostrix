@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -46,6 +47,27 @@ def contains_answer(text: str, answer: str) -> bool:
     return any(form.lower() in lowered for form in accepted_forms(answer))
 
 
+def _has_word(text: str, word: str) -> bool:
+    return re.search(r"(?<![a-z0-9])" + re.escape(word.lower()) + r"(?![a-z0-9])", text.lower()) is not None
+
+
+def cross_mixed_with(index: int, reply: str) -> str | None:
+    """Return the answer of another fact if the reply carries it in by mistake.
+
+    A word counts as mixed-in only if it is not part of this fact's own statement or
+    question. Example: the spare-key reply may say "blue" because the fact says "blue pot".
+    Returns the other fact's expected answer, or None.
+    """
+    statement, question, _ = FACTS[index]
+    for j, (_s, _q, other_answer) in enumerate(FACTS):
+        if j == index:
+            continue
+        for form in accepted_forms(other_answer):
+            if _has_word(reply, form) and not _has_word(statement, form) and not _has_word(question, form):
+                return other_answer
+    return None
+
+
 def run(character_path: str, config_path: str | None, out_root: str | None) -> int:
     cfg = load_config(config_path)
     character = Character.load(character_path)
@@ -71,7 +93,7 @@ def run(character_path: str, config_path: str | None, out_root: str | None) -> i
     memory = Memory(db_path, embedder=client)
     companion = Companion(memory, client, character, retrieval_k=cfg.retrieval_k)
     rows = []
-    for _statement, question, answer in FACTS:
+    for index, (_statement, question, answer) in enumerate(FACTS):
         reply = companion.turn(question)
         hits = memory.retrieve(question, k=cfg.retrieval_k)
         row = {
@@ -80,19 +102,24 @@ def run(character_path: str, config_path: str | None, out_root: str | None) -> i
             "reply": reply,
             "answer_correct": contains_answer(reply, answer),
             "retrieved_in_top_k": any(contains_answer(h.text, answer) for h in hits),
+            "cross_mixed_with": cross_mixed_with(index, reply),
         }
         rows.append(row)
         mark = "OK " if row["answer_correct"] else "MISS"
+        if row["cross_mixed_with"]:
+            mark += " MIXED"
         print(f"[{mark}] {question}\n       expected={answer!r}\n       reply={reply}", flush=True)
     companion.end()
     memory.close()
 
     correct = sum(r["answer_correct"] for r in rows)
     retrieved = sum(r["retrieved_in_top_k"] for r in rows)
-    verdict = "PASS" if correct >= THRESHOLD else "FAIL"
+    mixed = [r for r in rows if r["cross_mixed_with"]]
+    verdict = "PASS" if correct >= THRESHOLD and not mixed else "FAIL"
     report = {
         "answers_correct": correct,
         "retrieved_in_top_k": retrieved,
+        "cross_mixed_replies": len(mixed),
         "threshold": THRESHOLD,
         "verdict_before_manual_review": verdict,
         "rows": rows,
@@ -100,7 +127,7 @@ def run(character_path: str, config_path: str | None, out_root: str | None) -> i
     (base / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(
         f"\nanswers correct: {correct}/20 (threshold {THRESHOLD})  "
-        f"retrieval hits: {retrieved}/20  -> {verdict} before review"
+        f"retrieval hits: {retrieved}/20  mixed-in replies: {len(mixed)}  -> {verdict} before review"
     )
     print("Now read every reply for wrong or invented facts. Results: " + str(base / "results.json"))
     return 0

@@ -36,6 +36,7 @@ class OllamaClient:
         except urllib.error.HTTPError as exc:
             # Ollama answered, so the server is up. The body usually says why (e.g. model not found).
             detail = exc.read().decode("utf-8", "replace").strip()
+            exc.close()
             try:
                 detail = json.loads(detail).get("error", detail)
             except (ValueError, AttributeError):
