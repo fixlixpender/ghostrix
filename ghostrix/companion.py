@@ -26,7 +26,7 @@ class ChatModel(Protocol):
 
 
 class Companion:
-    def __init__(self, memory: Memory, model: ChatModel, character: Character, retrieval_k: int = 5) -> None:
+    def __init__(self, memory: Memory, model: ChatModel, character: Character, retrieval_k: int = 3) -> None:
         self.memory = memory
         self.model = model
         self.character = character

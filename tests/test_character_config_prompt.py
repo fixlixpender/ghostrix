@@ -82,6 +82,13 @@ class PromptTests(unittest.TestCase):
         self.assertIn("Stay in character.", p)
         self.assertIn("You are Ash.", p)
 
+    def test_answer_rules_only_when_memories_present(self):
+        self.assertNotIn("How to answer", build_system_prompt(self.char, [], []))
+        self.assertIn("How to answer", build_system_prompt(self.char, [], ["Dog is Biscuit."]))
+
+    def test_default_retrieval_is_top_three(self):
+        self.assertEqual(Config().retrieval_k, 3)
+
     def test_profile_and_memories_included(self):
         p = build_system_prompt(self.char, ["Likes espresso."], ["Dog is called Biscuit."])
         self.assertIn("- Likes espresso.", p)

@@ -18,7 +18,7 @@ class Config:
     ollama_host: str = "http://127.0.0.1:11434"
     data_dir: str = "~/.ghostrix"
     character_path: str = "character.toml"
-    retrieval_k: int = 5
+    retrieval_k: int = 3
 
     def __post_init__(self) -> None:
         if self.retrieval_k < 1:

@@ -30,6 +30,16 @@ def memories_block(snippets: Iterable[str], max_chars: int = 1200) -> list[str]:
     return kept
 
 
+ANSWER_RULES = (
+    "How to answer questions about the user:\n"
+    "- Answer with only what was asked, in as few words as the question needs.\n"
+    "- Use only the memory that directly answers the question. Ignore memories about other "
+    "people or other facts, even if they sit close together in the list.\n"
+    "- Do not add details that were not asked for, such as dates or numbers from other memories.\n"
+    "- If no memory clearly answers the question, say you are not sure. Do not guess."
+)
+
+
 def build_system_prompt(character: Character, profile: list[str], memories: list[str]) -> str:
     parts = [
         character.system_prompt,
@@ -46,4 +56,5 @@ def build_system_prompt(character: Character, profile: list[str], memories: list
             "do not state them as certain if unsure:\n"
             + "\n".join(f"- {m}" for m in memories)
         )
+        parts.append(ANSWER_RULES)
     return "\n\n".join(parts)
