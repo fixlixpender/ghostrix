@@ -91,6 +91,10 @@ class OllamaClientTests(unittest.TestCase):
         self.assertEqual(path, "/api/embed")
         self.assertEqual(payload["model"], "nomic-embed-text")
 
+    def test_http_error_reports_status_not_just_reason(self):
+        with self.assertRaisesRegex(OllamaError, "HTTP 404 for /api/nope"):
+            self.client._post("/api/nope", {})
+
     def test_unreachable_server_gives_clear_error(self):
         dead = OllamaClient("http://127.0.0.1:1", "m", "e", timeout=2)
         with self.assertRaisesRegex(OllamaError, "cannot reach Ollama"):

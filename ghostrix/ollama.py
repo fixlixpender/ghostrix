@@ -33,6 +33,16 @@ class OllamaClient:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # Ollama answered, so the server is up. The body usually says why (e.g. model not found).
+            detail = exc.read().decode("utf-8", "replace").strip()
+            try:
+                detail = json.loads(detail).get("error", detail)
+            except (ValueError, AttributeError):
+                pass
+            raise OllamaError(
+                f"Ollama at {self.host} answered HTTP {exc.code} for {path}: {detail[:300] or 'no detail'}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise OllamaError(
                 f"cannot reach Ollama at {self.host} ({exc.reason}). Is it running?"
