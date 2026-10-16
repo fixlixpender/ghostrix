@@ -95,6 +95,12 @@ class PromptTests(unittest.TestCase):
         self.assertIn("- Dog is called Biscuit.", p)
         self.assertIn("may be incomplete", p)
 
+    def test_core_rule_in_every_prompt(self):
+        from ghostrix.prompt import CORE_RULES
+        self.assertIn("Stay yourself", CORE_RULES)
+        self.assertIn(CORE_RULES, build_system_prompt(self.char, [], []))
+        self.assertIn(CORE_RULES, build_system_prompt(self.char, ["x"], ["y"]))
+
     def test_memory_budget_respected_and_ordered(self):
         snippets = ["a" * 500, "b" * 500, "c" * 500]
         kept = memories_block(snippets, max_chars=1000)
