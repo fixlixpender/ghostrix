@@ -51,7 +51,7 @@ class OllamaClient:
         except (ValueError, KeyError) as exc:
             raise OllamaError(f"unexpected response from Ollama: {exc}") from exc
 
-    def chat(self, system: str, messages: list[dict]) -> str:
+    def chat(self, system: str, messages: list[dict], temperature: float | None = None) -> str:
         payload = {
             "model": self.chat_model,
             "messages": [{"role": "system", "content": system}, *messages],
@@ -59,6 +59,8 @@ class OllamaClient:
             # Qwen3 thinking output would leak into replies and memory summaries.
             "think": False,
         }
+        if temperature is not None:
+            payload["options"] = {"temperature": temperature}
         return self._post("/api/chat", payload)["message"]["content"].strip()
 
     def embed(self, text: str) -> list[float]:

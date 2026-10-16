@@ -13,8 +13,8 @@ from .memory import Memory
 from .prompt import build_system_prompt, memories_block
 
 HISTORY_WINDOW = 20  # messages sent to the model each turn; older ones live in memory only
-REPEAT_WINDOW = 4    # how many of the companion's own recent replies to compare against
-MAX_REGENERATE = 2   # extra attempts when a reply copies a recent one
+MAX_REGENERATE = 2   # extra attempts when a reply copies an earlier one this session
+RETRY_TEMPERATURE = 0.95  # sampled hotter on retry, so a retry can actually differ
 
 REPEAT_NOTE = (
     "\n\nYour last reply repeated a line you already said in this conversation. Answer the "
@@ -33,7 +33,7 @@ def _norm(text: str) -> str:
 
 
 class ChatModel(Protocol):
-    def chat(self, system: str, messages: list[dict]) -> str: ...
+    def chat(self, system: str, messages: list[dict], temperature: float | None = None) -> str: ...
 
 
 class Companion:
@@ -62,12 +62,11 @@ class Companion:
             for m in self._history[-HISTORY_WINDOW:]
         ]
         reply = self.model.chat(system, window)
-        companion_lines = [_norm(m["content"]) for m in self._history if m["role"] == "companion"]
-        recent = set(companion_lines[-REPEAT_WINDOW:])
+        earlier = {_norm(m["content"]) for m in self._history if m["role"] == "companion"}
         for _ in range(MAX_REGENERATE):
-            if _norm(reply) not in recent:
+            if _norm(reply) not in earlier:
                 break
-            reply = self.model.chat(system + REPEAT_NOTE, window)
+            reply = self.model.chat(system + REPEAT_NOTE, window, temperature=RETRY_TEMPERATURE)
 
         reply_id = self.memory.log(self.session_id, "companion", reply)
         self._history.append({"id": reply_id, "role": "companion", "content": reply})

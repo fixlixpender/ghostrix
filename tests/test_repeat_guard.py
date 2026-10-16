@@ -18,8 +18,8 @@ class ScriptedModel:
         self.replies = list(replies)
         self.calls = []
 
-    def chat(self, system, messages):
-        self.calls.append(system)
+    def chat(self, system, messages, temperature=None):
+        self.calls.append((system, temperature))
         return self.replies.pop(0)
 
 
@@ -37,13 +37,25 @@ class RepeatGuardTests(unittest.TestCase):
         self.assertEqual(comp.turn("capital of Portugal?"), "Lisbon.")
         self.assertEqual(comp.turn("capital again?"), "Still Lisbon, new words.")
         self.assertEqual(len(model.calls), 3)
-        self.assertIn("repeated a line", model.calls[2])
+        self.assertIn("repeated a line", model.calls[2][0])
+        self.assertIsNone(model.calls[1][1])
+        self.assertIsNotNone(model.calls[2][1])
 
     def test_repeat_match_ignores_case_and_punctuation(self):
         model = ScriptedModel(["Yes, I like rain.", "yes i like rain", "Different now."])
         comp = Companion(self.mem, model, CHARACTER)
         comp.turn("do you like rain?")
         self.assertEqual(comp.turn("do you like rain?"), "Different now.")
+
+    def test_repeat_from_early_in_session_is_caught(self):
+        replies = ["The quiet before the night."] + [f"Other line {i}." for i in range(6)]
+        replies.append("The quiet before the night.")
+        replies.append("Something new.")
+        model = ScriptedModel(replies)
+        comp = Companion(self.mem, model, CHARACTER)
+        for i in range(7):
+            comp.turn(f"msg {i}")
+        self.assertEqual(comp.turn("late question"), "Something new.")
 
     def test_new_reply_is_not_regenerated(self):
         model = ScriptedModel(["First.", "Second."])
