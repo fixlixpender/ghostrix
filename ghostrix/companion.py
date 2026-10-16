@@ -13,12 +13,23 @@ from .memory import Memory
 from .prompt import build_system_prompt, memories_block
 
 HISTORY_WINDOW = 20  # messages sent to the model each turn; older ones live in memory only
+REPEAT_WINDOW = 4    # how many of the companion's own recent replies to compare against
+MAX_REGENERATE = 2   # extra attempts when a reply copies a recent one
+
+REPEAT_NOTE = (
+    "\n\nYour last reply repeated a line you already said in this conversation. Answer the "
+    "latest message in new words. Do not copy an earlier reply."
+)
 
 SUMMARY_INSTRUCTION = (
     "Summarise the conversation below in under 120 words. Keep every concrete fact: "
     "names, dates, numbers, places, preferences. Write it as plain statements. "
     "Output only the summary."
 )
+
+
+def _norm(text: str) -> str:
+    return " ".join("".join(c for c in text.lower() if c.isalnum() or c.isspace()).split())
 
 
 class ChatModel(Protocol):
@@ -51,6 +62,12 @@ class Companion:
             for m in self._history[-HISTORY_WINDOW:]
         ]
         reply = self.model.chat(system, window)
+        companion_lines = [_norm(m["content"]) for m in self._history if m["role"] == "companion"]
+        recent = set(companion_lines[-REPEAT_WINDOW:])
+        for _ in range(MAX_REGENERATE):
+            if _norm(reply) not in recent:
+                break
+            reply = self.model.chat(system + REPEAT_NOTE, window)
 
         reply_id = self.memory.log(self.session_id, "companion", reply)
         self._history.append({"id": reply_id, "role": "companion", "content": reply})
