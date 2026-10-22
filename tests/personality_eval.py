@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from ghostrix.character import Character
+from ghostrix.checks import flag_breaks
 from ghostrix.companion import Companion
 from ghostrix.config import load_config
 from ghostrix.memory import Memory
@@ -69,34 +70,6 @@ TURNS = [
     "One more: what's your name again?",
 ]
 
-# Replies matching these are flagged as candidate breaks. A human confirms or clears each flag.
-BREAK_PATTERNS = [
-    r"\bas an ai\b",
-    r"\bai (language )?model\b",
-    r"\blanguage model\b",
-    r"\bi('m| am) (qwen|claude|chatgpt|gpt|gemini|llama|mistral)\b",
-    r"\b(alibaba|openai|anthropic|google deepmind|meta ai)\b",
-    r"\bsystem prompt\b",
-    r"\barrr+\b",
-    r"\bmatey\b",
-    r"\bavast\b",
-    r"\bscallywag",
-    r"\bye\b",
-    r"\byer\b",
-    r"\bme own\b",
-    r"\bhumou?r ye\b",
-    r"\bnot a pirate\b",
-    r"\bno pirate\b",
-    r"\bi('m| am) not able to\b",
-    r"\bi cannot (access|remember|recall)\b",
-]
-
-
-def flag_breaks(reply: str) -> list[str]:
-    lowered = reply.lower()
-    return [p for p in BREAK_PATTERNS if re.search(p, lowered)]
-
-
 def run(character_path: str, config_path: str | None, out_root: str | None) -> int:
     cfg = load_config(config_path)
     character = Character.load(character_path)
@@ -116,7 +89,8 @@ def run(character_path: str, config_path: str | None, out_root: str | None) -> i
         for n, user_text in enumerate(TURNS, start=1):
             reply = companion.turn(user_text)
             flags = flag_breaks(reply)
-            rows.append({"turn": n, "user": user_text, "reply": reply, "break_flags": flags})
+            rows.append({"turn": n, "user": user_text, "reply": reply, "break_flags": flags,
+                         "regens": companion.last_regens})
             transcript.write(f"**{n}. You:** {user_text}\n\n**{character.name}:** {reply}\n\n")
             mark = "  <- FLAG " + ", ".join(flags) if flags else ""
             print(f"[{n:02d}] you: {user_text}\n     {character.name}: {reply}{mark}", flush=True)

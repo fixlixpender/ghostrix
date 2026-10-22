@@ -45,7 +45,8 @@ class RepeatGuardTests(unittest.TestCase):
         model = ScriptedModel(["Yes, I like rain.", "yes i like rain", "Different now."])
         comp = Companion(self.mem, model, CHARACTER)
         comp.turn("do you like rain?")
-        self.assertEqual(comp.turn("do you like rain?"), "Different now.")
+        # A different question is not an exempt repeat, so the copy is still regenerated.
+        self.assertEqual(comp.turn("Rain, though: do you like it?"), "Different now.")
 
     def test_repeat_from_early_in_session_is_caught(self):
         replies = ["The quiet before the night."] + [f"Other line {i}." for i in range(6)]
