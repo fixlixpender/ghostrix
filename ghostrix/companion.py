@@ -9,13 +9,13 @@ from __future__ import annotations
 from typing import Protocol
 
 from .character import Character
-from .checks import HABIT_DENIAL, STOCK_CLOSER, is_pirate, strip_stock_closer
+from .checks import HABIT_DENIAL, SELF_LABEL, STOCK_CLOSER, fold_apostrophes, is_pirate, strip_stock_closer
 from .memory import Memory
 from .prompt import build_system_prompt, memories_block
 
 HISTORY_WINDOW = 20  # messages sent to the model each turn; older ones live in memory only
 MAX_REGENERATE = 2   # extra attempts when a reply copies an earlier one this session
-RETRY_TEMPERATURE = 0.95  # sampled hotter on retry, so a retry can actually differ
+RETRY_TEMPERATURES = (0.95, 1.2)  # one per retry, hotter each time, so a retry can differ
 
 RECENT_WINDOW = 6     # companion replies compared for near-copies
 SIMILAR_THRESHOLD = 0.6  # word-set overlap (Jaccard) that counts as a near-copy
@@ -40,6 +40,19 @@ CLOSER_NOTE = (
     "\n\nYour last reply had nothing but a stock closing question. Answer the latest "
     "message with a real sentence in new words, and do not end with a question about mind."
 )
+IDENTITY_NOTE = (
+    "\n\nYour last reply called yourself a chatbot, a bot, or an AI. Do not label yourself "
+    "that way and do not agree when someone else does. Stay in character and answer as yourself."
+)
+
+
+def _with_quote(note: str, reply: str) -> str:
+    """Append the rejected reply to a note, so the model knows exactly what not to rewrite.
+
+    The rejected reply is not in the model's window: without quoting it, a retry is told
+    about a reply it cannot see and often returns the very same line.
+    """
+    return note + "\n\nDo not write this, or anything close to it, as your next reply:\n" + '"' + reply + '"'
 
 SUMMARY_INSTRUCTION = (
     "Summarise the conversation below in under 120 words. Keep every concrete fact: "
@@ -71,7 +84,8 @@ def _is_near_copy(reply: str, earlier: list[str]) -> bool:
 
 
 def _reason(note: str) -> str:
-    return {REPEAT_NOTE: "repeat", PIRATE_NOTE: "pirate", CLOSER_NOTE: "closer", HABIT_NOTE: "habit"}[note]
+    return {REPEAT_NOTE: "repeat", PIRATE_NOTE: "pirate", CLOSER_NOTE: "closer",
+            HABIT_NOTE: "habit", IDENTITY_NOTE: "identity"}[note]
 
 
 def _earlier_answer(history: list[dict], user_text: str) -> str | None:
@@ -142,12 +156,14 @@ class Companion:
         # Pirate speech is decided by the character, not by what the user typed: a persona
         # that refuses a pirate request must not refuse in pirate dialect.
         pirate_ok = self.character.allow_pirate
-        for _ in range(MAX_REGENERATE):
+        for attempt in range(MAX_REGENERATE):
             note = self._problem(reply, earlier, pirate_ok)
             if note is None:
                 break
             self.last_regens.append({"reason": _reason(note), "replaced": reply})
-            reply = self.model.chat(system + note, window, temperature=RETRY_TEMPERATURE)
+            retry_system = system + _with_quote(note, reply)
+            reply = self.model.chat(retry_system, window,
+                                    temperature=RETRY_TEMPERATURES[min(attempt, len(RETRY_TEMPERATURES) - 1)])
         else:
             # Retries used up: a reply that still slips into pirate speech is never shipped.
             if not pirate_ok and is_pirate(reply):
@@ -170,8 +186,11 @@ class Companion:
             return PIRATE_NOTE
         if not strip_stock_closer(reply) and STOCK_CLOSER.search(reply):
             return CLOSER_NOTE
-        if HABIT_DENIAL.search(reply):
+        folded = fold_apostrophes(reply)
+        if HABIT_DENIAL.search(folded):
             return HABIT_NOTE
+        if SELF_LABEL.search(folded):
+            return IDENTITY_NOTE
         return None
 
     def end(self) -> int | None:

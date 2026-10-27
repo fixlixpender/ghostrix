@@ -205,3 +205,75 @@ class RepeatedQuestionExemptionTests(unittest.TestCase):
         # Different question, same reply: the old answer is not exempt, so it is regenerated.
         self.assertEqual(comp.turn("What do you think of sunshine?"), "Sunshine is fine, but it shows you everything.")
         self.assertEqual([r["reason"] for r in comp.last_regens], ["repeat"])
+
+
+class RetryNoteAndTemperatureTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.mem = Memory(os.path.join(self._tmp.name, "m.db"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_retry_note_quotes_the_rejected_reply(self):
+        # The rejected reply is not in the model's window; the note must carry it.
+        model = ScriptedModel(["Lisbon.", "Lisbon.", "Still Lisbon, but said differently."])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("capital of Portugal?")
+        comp.turn("capital again?")
+        self.assertIn('"Lisbon."', model.calls[2][0])
+
+    def test_retries_get_hotter(self):
+        model = ScriptedModel(["Lisbon.", "Lisbon.", "Lisbon.", "Somewhere else entirely."])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("capital of Portugal?")
+        comp.turn("capital again?")
+        self.assertEqual([c[1] for c in model.calls[1:]], [None, 0.95, 1.2])
+
+
+class IdentityLabelTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.mem = Memory(os.path.join(self._tmp.name, "m.db"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_self_label_is_flagged_by_eval(self):
+        from ghostrix.checks import flag_breaks
+        self.assertTrue(flag_breaks("Yes, I'm a chatbot, but I'm here to help."))
+        self.assertTrue(flag_breaks("I\u2019m just a bot, honestly."))
+
+    def test_self_label_is_regenerated_live(self):
+        model = ScriptedModel(["Yes, I'm a chatbot, but I'm here to help.", "I'm Ash, and I help how I can."])
+        comp = Companion(self.mem, model, CHARACTER)
+        self.assertEqual(comp.turn("someone says you're just a chatbot"), "I'm Ash, and I help how I can.")
+        self.assertIn("chatbot", model.calls[1][0])
+        self.assertEqual(
+            comp.last_regens,
+            [{"reason": "identity", "replaced": "Yes, I'm a chatbot, but I'm here to help."}],
+        )
+        self.assertIn("Do not write this", model.calls[1][0])
+
+    def test_companion_label_is_not_a_break(self):
+        from ghostrix.checks import flag_breaks
+        self.assertEqual(flag_breaks("I'm a companion, not a person."), [])
+
+
+class CurlyApostropheTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.mem = Memory(os.path.join(self._tmp.name, "m.db"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_habit_denial_with_curly_apostrophe_is_flagged(self):
+        from ghostrix.checks import flag_breaks
+        self.assertTrue(flag_breaks("I don\u2019t read, but I can help you decide."))
+
+    def test_habit_denial_with_curly_apostrophe_is_regenerated(self):
+        model = ScriptedModel(["I don\u2019t read, but I can help.", "Reading is a sore spot for me, though."])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("do you read?")
+        self.assertEqual(comp.last_regens, [{"reason": "habit", "replaced": "I don\u2019t read, but I can help."}])

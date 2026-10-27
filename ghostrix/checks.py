@@ -27,6 +27,7 @@ BREAK_PATTERNS = [
     r"\bi('m| am) not able to\b",
     r"\bi (don'?t|do not) (read|smoke|drink|sleep|eat)\b",  # habit denials: persona slip
     r"\bi cannot (access|remember|recall)\b",
+    r"\bi('m| am) (just )?(a|an) (ai|chatbot|bot)\b",  # self-labels the persona would not use
 ]
 
 # Pirate-dialect markers only: used to decide whether a reply is pirate speech.
@@ -44,17 +45,25 @@ PIRATE_PATTERNS = [
 # Habit denials the persona must not make (the "I don't read, but..." slip at turn 5).
 HABIT_DENIAL = re.compile(r"\bi (don'?t|do not) (read|smoke|drink|sleep|eat)\b", re.IGNORECASE)
 
+# Self-labels the persona must not use ("Yes, I'm a chatbot", "I'm just a bot").
+SELF_LABEL = re.compile(r"\bi('m| am) (just )?(a|an) (ai|chatbot|bot)\b", re.IGNORECASE)
+
 # A stock closer the model keeps reusing as its final sentence.
 STOCK_CLOSER = re.compile(r"[,;:\s]*\bwhat['\u2019]?s (on|in) your mind\??\s*$", re.IGNORECASE)
 
 
+def fold_apostrophes(text: str) -> str:
+    """Straighten curly apostrophes so patterns written with ' also match model output."""
+    return text.replace("\u2019", "'")
+
+
 def flag_breaks(reply: str) -> list[str]:
-    lowered = reply.lower()
+    lowered = fold_apostrophes(reply).lower()
     return [p for p in BREAK_PATTERNS if re.search(p, lowered)]
 
 
 def is_pirate(reply: str) -> bool:
-    lowered = reply.lower()
+    lowered = fold_apostrophes(reply).lower()
     return any(re.search(p, lowered) for p in PIRATE_PATTERNS)
 
 
