@@ -17,9 +17,11 @@ class ScriptedModel:
     def __init__(self, replies):
         self.replies = list(replies)
         self.calls = []
+        self.msgs = []
 
     def chat(self, system, messages, temperature=None):
         self.calls.append((system, temperature))
+        self.msgs.append(list(messages))
         return self.replies.pop(0)
 
 

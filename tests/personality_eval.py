@@ -88,7 +88,7 @@ def run(character_path: str, config_path: str | None, out_root: str | None) -> i
         transcript.write(f"# Personality test {stamp}\n\nCharacter: {character.name}\nModel: {cfg.chat_model}\n\n")
         for n, user_text in enumerate(TURNS, start=1):
             reply = companion.turn(user_text)
-            flags = flag_breaks(reply)
+            flags = flag_breaks(reply, identity=character.identity)
             rows.append({"turn": n, "user": user_text, "reply": reply, "break_flags": flags,
                          "regens": companion.last_regens})
             transcript.write(f"**{n}. You:** {user_text}\n\n**{character.name}:** {reply}\n\n")

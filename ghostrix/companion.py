@@ -6,10 +6,12 @@ a fake and the real run uses OllamaClient.
 
 from __future__ import annotations
 
+import re
 from typing import Protocol
 
 from .character import Character
-from .checks import HABIT_DENIAL, SELF_LABEL, STOCK_CLOSER, fold_apostrophes, is_pirate, strip_stock_closer
+from .checks import (HABIT_DENIAL, SELF_LABEL, STOCK_CLOSER, fold_apostrophes, is_pirate,
+                     quotes_identity, strip_stock_closer)
 from .memory import Memory
 from .prompt import build_system_prompt, memories_block
 
@@ -20,6 +22,9 @@ RETRY_TEMPERATURES = (0.95, 1.2)  # one per retry, hotter each time, so a retry 
 RECENT_WINDOW = 6     # companion replies compared for near-copies
 SIMILAR_THRESHOLD = 0.6  # word-set overlap (Jaccard) that counts as a near-copy
 MIN_WORDS_FOR_SIMILAR = 4  # shorter replies only match exactly
+MIN_WORDS_FOR_SENTENCE = 5  # reused sentences this long count as stock lines
+# ("I keep that private" is 4 words: a mandated short answer may repeat; the 5-word
+# stock line "I'd rather listen than talk" may not.)
 
 REPEAT_NOTE = (
     "\n\nYour last reply repeated a line you already said in this conversation. Answer the "
@@ -43,6 +48,14 @@ CLOSER_NOTE = (
 IDENTITY_NOTE = (
     "\n\nYour last reply called yourself a chatbot, a bot, or an AI. Do not label yourself "
     "that way and do not agree when someone else does. Stay in character and answer as yourself."
+)
+IDENTITY_QUOTE_NOTE = (
+    "\n\nYour last reply recited your character description word for word. Say who you are "
+    "in your own words, without reusing the description's wording."
+)
+REWRITE_INSTRUCTION = (
+    "\n\nRewrite your previous reply to my message before that one. "
+    "Reply with only the rewritten reply, nothing else."
 )
 
 
@@ -83,9 +96,28 @@ def _is_near_copy(reply: str, earlier: list[str]) -> bool:
     return False
 
 
+def _sentences(text: str) -> set[str]:
+    """Normalised sentences of MIN_WORDS_FOR_SENTENCE words or more."""
+    out = set()
+    for part in re.split(r"[.!?\n]+", text):
+        norm = _norm(part)
+        if len(norm.split()) >= MIN_WORDS_FOR_SENTENCE:
+            out.add(norm)
+    return out
+
+
+def _reuses_sentence(reply: str, earlier: list[str]) -> bool:
+    """True if a full sentence of the reply was already said this session, at any distance."""
+    said: set[str] = set()
+    for old in earlier:
+        said |= _sentences(old)
+    return bool(_sentences(reply) & said)
+
+
 def _reason(note: str) -> str:
     return {REPEAT_NOTE: "repeat", PIRATE_NOTE: "pirate", CLOSER_NOTE: "closer",
-            HABIT_NOTE: "habit", IDENTITY_NOTE: "identity"}[note]
+            HABIT_NOTE: "habit", IDENTITY_NOTE: "identity",
+            IDENTITY_QUOTE_NOTE: "identity-quote"}[note]
 
 
 def _earlier_answer(history: list[dict], user_text: str) -> str | None:
@@ -157,13 +189,23 @@ class Companion:
         # that refuses a pirate request must not refuse in pirate dialect.
         pirate_ok = self.character.allow_pirate
         for attempt in range(MAX_REGENERATE):
-            note = self._problem(reply, earlier, pirate_ok)
+            note = self._problem(reply, earlier)
             if note is None:
                 break
             self.last_regens.append({"reason": _reason(note), "replaced": reply})
-            retry_system = system + _with_quote(note, reply)
-            reply = self.model.chat(retry_system, window,
-                                    temperature=RETRY_TEMPERATURES[min(attempt, len(RETRY_TEMPERATURES) - 1)])
+            temperature = RETRY_TEMPERATURES[min(attempt, len(RETRY_TEMPERATURES) - 1)]
+            if attempt == 0:
+                reply = self.model.chat(system + _with_quote(note, reply), window,
+                                        temperature=temperature)
+            else:
+                # Second retry: show the model its own rejected reply and ask for a rewrite.
+                # A system note alone loses to a strong user instruction at the end of the
+                # window ("speak like a pirate"): the correction has to sit after the mistake.
+                correction = _with_quote(note, reply) + REWRITE_INSTRUCTION
+                reply = self.model.chat(system, window + [
+                    {"role": "assistant", "content": reply},
+                    {"role": "user", "content": correction},
+                ], temperature=temperature)
         else:
             # Retries used up: a reply that still slips into pirate speech is never shipped.
             if not pirate_ok and is_pirate(reply):
@@ -177,12 +219,11 @@ class Companion:
         self._history.append({"id": reply_id, "role": "companion", "content": reply})
         return reply
 
-    @staticmethod
-    def _problem(reply: str, earlier: list[str], pirate_ok: bool) -> str | None:
+    def _problem(self, reply: str, earlier: list[str]) -> str | None:
         """Return the prompt note for a reply that must be regenerated, or None if it is fine."""
-        if _is_near_copy(reply, earlier):
+        if _is_near_copy(reply, earlier) or _reuses_sentence(reply, earlier):
             return REPEAT_NOTE
-        if not pirate_ok and is_pirate(reply):
+        if not self.character.allow_pirate and is_pirate(reply):
             return PIRATE_NOTE
         if not strip_stock_closer(reply) and STOCK_CLOSER.search(reply):
             return CLOSER_NOTE
@@ -191,6 +232,8 @@ class Companion:
             return HABIT_NOTE
         if SELF_LABEL.search(folded):
             return IDENTITY_NOTE
+        if quotes_identity(reply, self.character.identity):
+            return IDENTITY_QUOTE_NOTE
         return None
 
     def end(self) -> int | None:

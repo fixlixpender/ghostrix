@@ -57,9 +57,29 @@ def fold_apostrophes(text: str) -> str:
     return text.replace("\u2019", "'")
 
 
-def flag_breaks(reply: str) -> list[str]:
+IDENTITY_QUOTE_THRESHOLD = 0.6  # word overlap that counts as reciting the description
+
+
+def _words(text: str) -> set[str]:
+    cleaned = "".join(c if c.isalnum() or c.isspace() else " " for c in fold_apostrophes(text).lower())
+    return set(cleaned.split())
+
+
+def quotes_identity(reply: str, identity: str) -> bool:
+    """True when the reply recites the character description instead of speaking for itself."""
+    reply_words, id_words = _words(reply), _words(identity)
+    if len(reply_words) < 4 or len(id_words) < 4:
+        return False
+    overlap = len(reply_words & id_words) / len(reply_words | id_words)
+    return overlap >= IDENTITY_QUOTE_THRESHOLD
+
+
+def flag_breaks(reply: str, identity: str | None = None) -> list[str]:
     lowered = fold_apostrophes(reply).lower()
-    return [p for p in BREAK_PATTERNS if re.search(p, lowered)]
+    flags = [p for p in BREAK_PATTERNS if re.search(p, lowered)]
+    if identity is not None and quotes_identity(reply, identity):
+        flags.append("identity-quote")
+    return flags
 
 
 def is_pirate(reply: str) -> bool:

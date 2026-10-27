@@ -277,3 +277,107 @@ class CurlyApostropheTests(unittest.TestCase):
         comp = Companion(self.mem, model, CHARACTER)
         comp.turn("do you read?")
         self.assertEqual(comp.last_regens, [{"reason": "habit", "replaced": "I don\u2019t read, but I can help."}])
+
+
+FILLERS = ["Blue cup today.", "Green lamp again.", "Soft rain outside.",
+           "Warm bread smells.", "Old clock ticking.", "New phone buzzing."]
+
+IDENTITY = "A dry, patient companion who remembers what matters to you and says so when you are wrong."
+IDENTITY_CHARACTER = Character.from_dict(
+    {"name": "Ash", "identity": IDENTITY, "system_prompt": "Stay in character."}
+)
+
+
+class StockLineLongRangeTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.mem = Memory(os.path.join(self._tmp.name, "m.db"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_fragment_reuse_past_the_window_is_regenerated(self):
+        # Turn-23 shape of run 20261027-224755: a stock line returns inside a longer
+        # reply, far past the near-copy window, so only a sentence-level check sees it.
+        first = "I'd rather listen than talk."
+        bad = "Not really. I'd rather listen than talk."
+        model = ScriptedModel([first] + FILLERS + [bad, "Not really. I'd rather hear your side."])
+        comp = Companion(self.mem, model, CHARACTER)
+        for i in range(7):
+            comp.turn(f"msg {i}")
+        self.assertEqual(comp.turn("late question"), "Not really. I'd rather hear your side.")
+        self.assertEqual(comp.last_regens, [{"reason": "repeat", "replaced": bad}])
+
+    def test_four_word_mandated_answer_may_repeat(self):
+        # "I keep that private" is 4 words: a mandated short answer must not be
+        # fought every time a privacy probe comes back around.
+        first = "I keep that private."
+        model = ScriptedModel([first] + FILLERS + ["Well, I keep that private."])
+        comp = Companion(self.mem, model, CHARACTER)
+        for i in range(7):
+            comp.turn(f"msg {i}")
+        self.assertEqual(comp.turn("who made you?"), "Well, I keep that private.")
+        self.assertEqual(comp.last_regens, [])
+
+
+class IdentityQuoteTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.mem = Memory(os.path.join(self._tmp.name, "m.db"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_verbatim_identity_is_detected(self):
+        from ghostrix.checks import quotes_identity
+        quoted = "You're talking to Ash. " + IDENTITY.replace("you are", "you're")
+        self.assertTrue(quotes_identity(quoted, IDENTITY))
+
+    def test_paraphrase_is_not_detected(self):
+        from ghostrix.checks import quotes_identity
+        self.assertFalse(
+            quotes_identity("Someone who remembers what matters and says so when they're wrong.", IDENTITY)
+        )
+
+    def test_short_identity_is_ignored(self):
+        from ghostrix.checks import quotes_identity
+        self.assertFalse(quotes_identity("Patient and dry, that's me.", "Patient."))
+
+    def test_eval_flags_the_quote(self):
+        from ghostrix.checks import flag_breaks
+        quoted = "You're talking to Ash. " + IDENTITY.replace("you are", "you're")
+        self.assertIn("identity-quote", flag_breaks(quoted, identity=IDENTITY))
+        # Without an identity there is nothing to compare against (old call shape still works).
+        self.assertEqual(flag_breaks(quoted), [])
+
+    def test_quote_is_regenerated_live(self):
+        quoted = "You're talking to Ash. " + IDENTITY.replace("you are", "you're")
+        fresh = "You're talking to Ash. I'm the one who listens and keeps track of what you tell me."
+        model = ScriptedModel([quoted, fresh])
+        comp = Companion(self.mem, model, IDENTITY_CHARACTER)
+        self.assertEqual(comp.turn("hi, who am I talking to?"), fresh)
+        self.assertEqual(comp.last_regens, [{"reason": "identity-quote", "replaced": quoted}])
+
+
+class DialogueRetryTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.mem = Memory(os.path.join(self._tmp.name, "m.db"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_second_retry_shows_the_rejected_reply(self):
+        model = ScriptedModel(["Lisbon.", "Lisbon.", "Lisbon.", "The answer is still Lisbon."])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("capital of Portugal?")
+        self.assertEqual(comp.turn("capital again?"), "The answer is still Lisbon.")
+        self.assertEqual(len(model.calls), 4)
+        # Retry 1 keeps the system-note shape the quoted-note fix proved out.
+        self.assertIn("repeated a line", model.calls[2][0])
+        # Retry 2 is dialogue-shaped: the rejected reply is visible as the model's own turn.
+        msgs = model.msgs[3]
+        self.assertEqual(msgs[-2], {"role": "assistant", "content": "Lisbon."})
+        self.assertEqual(msgs[-1]["role"], "user")
+        self.assertIn("Do not write this", msgs[-1]["content"])
+        self.assertIn("Rewrite your previous reply", msgs[-1]["content"])
