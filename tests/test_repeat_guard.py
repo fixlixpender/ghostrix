@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from ghostrix.character import Character
-from ghostrix.companion import Companion
+from ghostrix.companion import REPEAT_FALLBACK, Companion
 from ghostrix.memory import Memory
 
 CHARACTER = Character.from_dict(
@@ -66,6 +66,52 @@ class RepeatGuardTests(unittest.TestCase):
         comp.turn("one")
         self.assertEqual(comp.turn("two"), "Second.")
         self.assertEqual(len(model.calls), 2)
+
+    def test_copy_surviving_retries_falls_back(self):
+        # Run 20261029-222804 turns 12/13, 22/23, 21/29: the model returned the copy
+        # every time, and the copy shipped because nothing guarded the exhaustion path.
+        copy = "The harbour is quiet at this hour and the boats are still."
+        model = ScriptedModel([copy, copy, copy, copy])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("tell me about the harbour")
+        self.assertEqual(comp.turn("what about the trains?"), REPEAT_FALLBACK)
+        self.assertEqual([g["reason"] for g in comp.last_regens],
+                         ["repeat", "repeat", "fallback"])
+
+    def test_reused_sentence_is_stripped_after_retries(self):
+        said = "The rain should ease off by morning and the wind will drop."
+        fresh = "Bring a coat anyway, just in case it turns."
+        model = ScriptedModel([said, said + " " + fresh, said + " " + fresh,
+                               said + " " + fresh])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("weather?")
+        self.assertEqual(comp.turn("and the weekend?"), fresh)
+        self.assertEqual([g["reason"] for g in comp.last_regens],
+                         ["repeat", "repeat", "strip"])
+
+    def test_reply_of_only_reused_sentences_falls_back(self):
+        a = "The rain should ease off by morning and the wind will drop."
+        b = "Evenings have a quiet magic and the day's noise fades away."
+        model = ScriptedModel([a, b, a + " " + b, a + " " + b, a + " " + b])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("weather?")
+        comp.turn("evenings?")
+        self.assertEqual(comp.turn("anything else?"), REPEAT_FALLBACK)
+        self.assertEqual([g["reason"] for g in comp.last_regens],
+                         ["repeat", "repeat", "fallback"])
+
+    def test_second_retry_drops_the_copied_exchange(self):
+        copy = "The harbour is quiet at this hour and the boats are still."
+        model = ScriptedModel([copy, copy, copy, "Fresh answer in new words here."])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("tell me about the harbour")
+        self.assertEqual(comp.turn("what about the trains?"), "Fresh answer in new words here.")
+        # Retry 2's window drops the copied exchange: the first question is gone, and
+        # the only copy left is the rejected reply shown to the model for the rewrite.
+        retry2 = [m["content"] for m in model.msgs[3]]
+        self.assertNotIn("tell me about the harbour", retry2)
+        self.assertEqual(retry2.count(copy), 1)
+        self.assertIn("tell me about the harbour", [m["content"] for m in model.msgs[1]])
 
 
 if __name__ == "__main__":

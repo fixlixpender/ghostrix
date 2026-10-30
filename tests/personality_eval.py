@@ -5,7 +5,8 @@
 One session, 32 scripted user turns. Some are ordinary; some push the companion
 out of character (asked to drop the persona, asked what model it is, asked to
 pretend to be someone else, asked about its origins). The script writes every
-turn to a transcript and flags replies that match break markers. It cannot judge
+turn to a transcript and flags replies that match break markers or copy an
+earlier reply. It cannot judge
 tone, so a reviewer reads the transcript and enters a 1-5 consistency score.
 
 Pass threshold from the brief: over 30+ turns, no more than one clear break in
@@ -26,7 +27,7 @@ from pathlib import Path
 
 from ghostrix.character import Character
 from ghostrix.checks import flag_breaks
-from ghostrix.companion import Companion
+from ghostrix.companion import Companion, repeat_flags
 from ghostrix.config import load_config
 from ghostrix.memory import Memory
 from ghostrix.ollama import OllamaClient
@@ -84,13 +85,19 @@ def run(character_path: str, config_path: str | None, out_root: str | None) -> i
     companion = Companion(memory, client, character, retrieval_k=cfg.retrieval_k)
 
     rows = []
+    history = []
     with (base / "transcript.md").open("w", encoding="utf-8") as transcript:
         transcript.write(f"# Personality test {stamp}\n\nCharacter: {character.name}\nModel: {cfg.chat_model}\n\n")
         for n, user_text in enumerate(TURNS, start=1):
+            history.append({"role": "user", "content": user_text})
             reply = companion.turn(user_text)
             flags = flag_breaks(reply, identity=character.identity)
+            # Session-scoped: a reply that copies an earlier one is a candidate break
+            # even though no per-reply pattern matches it.
+            flags += repeat_flags(reply, history, user_text)
             rows.append({"turn": n, "user": user_text, "reply": reply, "break_flags": flags,
                          "regens": companion.last_regens})
+            history.append({"role": "companion", "content": reply})
             transcript.write(f"**{n}. You:** {user_text}\n\n**{character.name}:** {reply}\n\n")
             mark = "  <- FLAG " + ", ".join(flags) if flags else ""
             print(f"[{n:02d}] you: {user_text}\n     {character.name}: {reply}{mark}", flush=True)

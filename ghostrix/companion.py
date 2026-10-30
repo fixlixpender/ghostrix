@@ -37,6 +37,9 @@ PIRATE_NOTE = (
 PIRATE_FALLBACK = (
     "I'll stay in my own voice, so no pirate talk from me. What do you need?"
 )
+REPEAT_FALLBACK = (
+    "I keep saying the same thing twice. Give me a moment, then try me again."
+)
 HABIT_NOTE = (
     "\n\nYour last reply denied a habit of yours (\"I don't read\", \"I don't smoke\"). Stay in "
     "character and answer the latest message without denying habits."
@@ -96,14 +99,28 @@ def _is_near_copy(reply: str, earlier: list[str]) -> bool:
     return False
 
 
-def _sentences(text: str) -> set[str]:
-    """Normalised sentences of MIN_WORDS_FOR_SENTENCE words or more."""
-    out = set()
-    for part in re.split(r"[.!?\n]+", text):
-        norm = _norm(part)
-        if len(norm.split()) >= MIN_WORDS_FOR_SENTENCE:
-            out.add(norm)
+def _sentence_parts(text: str) -> list[tuple[str, str]]:
+    """(norm, text-with-punctuation) pairs, split on sentence and clause boundaries.
+
+    Clauses count too: qwen3 hides a stock line inside a fresh sentence
+    ("I keep that private, but I'm here to listen...") and a whole-sentence
+    comparison misses it.
+    """
+    parts = re.split(r"([.!?\n,;:]+)", text)
+    out = []
+    for i in range(0, len(parts) - 1, 2):
+        body, sep = parts[i], parts[i + 1]
+        if _norm(body):
+            out.append((_norm(body), body + sep))
+    if _norm(parts[-1]):
+        out.append((_norm(parts[-1]), parts[-1]))
     return out
+
+
+def _sentences(text: str) -> set[str]:
+    """Normalised sentence/clause fragments of MIN_WORDS_FOR_SENTENCE words or more."""
+    return {norm for norm, _ in _sentence_parts(text)
+            if len(norm.split()) >= MIN_WORDS_FOR_SENTENCE}
 
 
 def _reuses_sentence(reply: str, earlier: list[str]) -> bool:
@@ -112,6 +129,39 @@ def _reuses_sentence(reply: str, earlier: list[str]) -> bool:
     for old in earlier:
         said |= _sentences(old)
     return bool(_sentences(reply) & said)
+
+
+def _fresh_fragments(reply: str, earlier: list[str]) -> str | None:
+    """The reply with every fragment already said this session removed.
+
+    Returns None when almost nothing is left, so the caller can fall back
+    instead of shipping a stub.
+    """
+    said: set[str] = set()
+    for old in earlier:
+        said |= _sentences(old)
+    kept = "".join(text for norm, text in _sentence_parts(reply) if norm not in said).strip()
+    if len(_norm(kept).split()) < 3:
+        return None
+    kept = kept.rstrip(" ,;:\n")
+    return kept if kept[-1] in ".!?" else kept + "."
+
+
+def _copy_sources(reply: str, earlier: list[str]) -> list[str]:
+    """Earlier replies this one copies: an exact match, a reused fragment, or a near-copy."""
+    norm = _norm(reply)
+    words = set(norm.split())
+    shared = _sentences(reply)
+    sources = []
+    for old in earlier:
+        old_norm = _norm(old)
+        old_words = set(old_norm.split())
+        if old_norm == norm or (_sentences(old) & shared):
+            sources.append(old)
+        elif (len(words) >= MIN_WORDS_FOR_SIMILAR and len(old_words) >= MIN_WORDS_FOR_SIMILAR
+              and len(words & old_words) / len(words | old_words) >= SIMILAR_THRESHOLD):
+            sources.append(old)
+    return sources
 
 
 def _reason(note: str) -> str:
@@ -143,6 +193,48 @@ def _earlier_answer(history: list[dict], user_text: str) -> str | None:
     return answer
 
 
+def _earlier_replies(history: list[dict], user_text: str) -> list[str]:
+    """Companion replies so far, minus one answer the user is deliberately asking for again."""
+    repeat_answer = _earlier_answer(history, user_text)
+    exempt = _norm(repeat_answer) if repeat_answer is not None else None
+    return [m["content"] for m in history
+            if m["role"] == "companion" and _norm(m["content"]) != exempt]
+
+
+def repeat_flags(reply: str, history: list[dict], user_text: str) -> list[str]:
+    """Repeat flags for the eval: 'copy' and/or 'sentence-reuse'.
+
+    history ends with the current user message and does not include reply yet,
+    the same state the live guard sees. The same-question exemption applies.
+    """
+    earlier = _earlier_replies(history, user_text)
+    flags = []
+    if _is_near_copy(reply, earlier):
+        flags.append("copy")
+    if _reuses_sentence(reply, earlier):
+        flags.append("sentence-reuse")
+    return flags
+
+
+def _window(history: list[dict], skip: set[str]) -> list[dict]:
+    """The chat window, dropping whole exchanges whose companion reply is in skip.
+
+    A retry that copies an earlier reply is answered with those exchanges removed:
+    the model echoes what it can see, so the text it keeps copying is taken away.
+    """
+    drop: set[int] = set()
+    for i, m in enumerate(history):
+        if m["role"] == "companion" and _norm(m["content"]) in skip:
+            drop.add(i)
+            if i and history[i - 1]["role"] == "user":
+                drop.add(i - 1)
+    kept = [m for i, m in enumerate(history) if i not in drop]
+    return [
+        {"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
+        for m in kept[-HISTORY_WINDOW:]
+    ]
+
+
 class ChatModel(Protocol):
     def chat(self, system: str, messages: list[dict], temperature: float | None = None) -> str: ...
 
@@ -171,20 +263,12 @@ class Companion:
         user_id = self.memory.log(self.session_id, "user", user_text)
         self._history.append({"id": user_id, "role": "user", "content": user_text})
 
-        window = [
-            {"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
-            for m in self._history[-HISTORY_WINDOW:]
-        ]
+        window = _window(self._history, set())
         reply = self.model.chat(system, window)
         self.last_regens = []
         # A question the user asked again on purpose may get the same answer it got before,
         # so that answer is not a repeat. Every other earlier reply still counts.
-        repeat_answer = _earlier_answer(self._history, user_text)
-        exempt = _norm(repeat_answer) if repeat_answer is not None else None
-        earlier = [
-            m["content"] for m in self._history
-            if m["role"] == "companion" and _norm(m["content"]) != exempt
-        ]
+        earlier = _earlier_replies(self._history, user_text)
         # Pirate speech is decided by the character, not by what the user typed: a persona
         # that refuses a pirate request must not refuse in pirate dialect.
         pirate_ok = self.character.allow_pirate
@@ -198,16 +282,26 @@ class Companion:
                 reply = self.model.chat(system + _with_quote(note, reply), window,
                                         temperature=temperature)
             else:
-                # Second retry: show the model its own rejected reply and ask for a rewrite.
-                # A system note alone loses to a strong user instruction at the end of the
-                # window ("speak like a pirate"): the correction has to sit after the mistake.
+                # Second retry: show the model its own rejected reply and ask for a rewrite,
+                # and take the exchanges it is copying out of the window. A correction alone
+                # loses to text sitting in front of the model: it has to not be there.
                 correction = _with_quote(note, reply) + REWRITE_INSTRUCTION
-                reply = self.model.chat(system, window + [
+                skip = {_norm(s) for s in _copy_sources(reply, earlier)}
+                reply = self.model.chat(system, _window(self._history, skip) + [
                     {"role": "assistant", "content": reply},
                     {"role": "user", "content": correction},
                 ], temperature=temperature)
         else:
-            # Retries used up: a reply that still slips into pirate speech is never shipped.
+            # Retries used up: a reply that still copies an earlier one is never shipped.
+            if _is_near_copy(reply, earlier):
+                self.last_regens.append({"reason": "fallback", "replaced": reply})
+                reply = REPEAT_FALLBACK
+            elif _reuses_sentence(reply, earlier):
+                kept = _fresh_fragments(reply, earlier)
+                self.last_regens.append(
+                    {"reason": "strip" if kept else "fallback", "replaced": reply})
+                reply = kept or REPEAT_FALLBACK
+            # A reply that still slips into pirate speech is never shipped either.
             if not pirate_ok and is_pirate(reply):
                 self.last_regens.append({"reason": "fallback", "replaced": reply})
                 reply = PIRATE_FALLBACK
