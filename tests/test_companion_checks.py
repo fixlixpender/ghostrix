@@ -319,6 +319,42 @@ class StockLineLongRangeTests(unittest.TestCase):
         self.assertEqual(comp.turn("who made you?"), "Well, I keep that private.")
         self.assertEqual(comp.last_regens, [])
 
+    def test_dash_spacing_copy_is_regenerated(self):
+        # Turn-30 shape of run 20261030-231116: turn 30 copied turn 4 verbatim but
+        # with different spacing around an em dash, and _norm fused "noise—just"
+        # into one word so no comparison matched. Punctuation must be a space.
+        first = "Evenings are quiet. No rush, no noise—just time to breathe."
+        bad = "Evenings are quiet. No rush, no noise — just time to breathe."
+        model = ScriptedModel([first, bad, "Sleep comes easy after a day like this."])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("underrated about evenings?")
+        self.assertEqual(comp.turn("goodnight, any last thought?"),
+                         "Sleep comes easy after a day like this.")
+        self.assertEqual(comp.last_regens, [{"reason": "repeat", "replaced": bad}])
+
+    def test_phrase_tic_far_apart_is_regenerated(self):
+        # Turns 5/6/9 shape of run 20261030-231116: the same advice phrase inside
+        # fresh sentences — past the near-copy window, under the sentence check.
+        first = "Pick the one that feels like a conversation you want to keep."
+        tic = "Not really. Try something that feels like a conversation you want to keep."
+        fresh = "Not really. Start with the thinnest one and see if it grabs you."
+        model = ScriptedModel([first] + FILLERS + [tic, fresh])
+        comp = Companion(self.mem, model, CHARACTER)
+        for i in range(7):
+            comp.turn(f"msg {i}")
+        self.assertEqual(comp.turn("which book?"), fresh)
+        self.assertEqual(comp.last_regens, [{"reason": "phrase", "replaced": tic}])
+
+    def test_phrase_reuse_flags_appear_in_repeat_flags(self):
+        from ghostrix.companion import repeat_flags
+        history = [
+            {"role": "user", "content": "q1"},
+            {"role": "companion", "content": "Pick the one that feels like a conversation you want to keep."},
+            {"role": "user", "content": "q2"},
+        ]
+        tic = "Not really. Try something that feels like a conversation you want to keep."
+        self.assertEqual(repeat_flags(tic, history, "q2"), ["phrase-reuse"])
+
 
 class IdentityQuoteTests(unittest.TestCase):
     def setUp(self):
@@ -333,10 +369,20 @@ class IdentityQuoteTests(unittest.TestCase):
         quoted = "You're talking to Ash. " + IDENTITY.replace("you are", "you're")
         self.assertTrue(quotes_identity(quoted, IDENTITY))
 
-    def test_paraphrase_is_not_detected(self):
+    def test_lifted_clause_with_shim_word_is_detected(self):
+        # Turn-28 shape of run 20261030-231116: the identity's trait sentence with a
+        # shim word in front ("A good friend..."). Reciting the card is not paraphrase.
+        from ghostrix.checks import quotes_identity
+        self.assertTrue(
+            quotes_identity("A good friend remembers what matters — and says so when they're wrong.", IDENTITY)
+        )
+
+    def test_genuine_paraphrase_is_not_detected(self):
         from ghostrix.checks import quotes_identity
         self.assertFalse(
-            quotes_identity("Someone who remembers what matters and says so when they're wrong.", IDENTITY)
+            quotes_identity(
+                "Someone who keeps track of the important stuff and calls you out when you mess up.",
+                IDENTITY)
         )
 
     def test_short_identity_is_ignored(self):

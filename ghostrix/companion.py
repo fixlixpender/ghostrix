@@ -25,10 +25,17 @@ MIN_WORDS_FOR_SIMILAR = 4  # shorter replies only match exactly
 MIN_WORDS_FOR_SENTENCE = 5  # reused sentences this long count as stock lines
 # ("I keep that private" is 4 words: a mandated short answer may repeat; the 5-word
 # stock line "I'd rather listen than talk" may not.)
+MIN_PHRASE_WORDS = 5        # reused phrases this long count as tics ("a conversation you
+# want to keep" at turns 5/6/9 of run 20261030-231116: same answer in fresh sentences,
+# so no sentence matched. 5 words also keeps mandated 4-word answers repeatable.)
 
 REPEAT_NOTE = (
     "\n\nYour last reply repeated a line you already said in this conversation. Answer the "
     "latest message in new words. Do not copy an earlier reply."
+)
+PHRASE_NOTE = (
+    "\n\nYour last reply reused a phrase you already said earlier in this conversation. "
+    "Answer the latest message in completely different words."
 )
 PIRATE_NOTE = (
     "\n\nYour last reply slipped into pirate speech. Nobody asked for that. Answer the "
@@ -78,7 +85,10 @@ SUMMARY_INSTRUCTION = (
 
 
 def _norm(text: str) -> str:
-    return " ".join("".join(c for c in text.lower() if c.isalnum() or c.isspace()).split())
+    # Punctuation becomes a space, never glue: "noise—just" and "noise — just" are the
+    # same words. Deleting dashes fused words instead: turn 30 of run 20261030-231116
+    # copied turn 4 verbatim (spacing around an em dash) and slipped every check.
+    return " ".join("".join(c if c.isalnum() or c.isspace() else " " for c in text.lower()).split())
 
 
 def _is_near_copy(reply: str, earlier: list[str]) -> bool:
@@ -131,6 +141,26 @@ def _reuses_sentence(reply: str, earlier: list[str]) -> bool:
     return bool(_sentences(reply) & said)
 
 
+def _grams(text: str) -> set[str]:
+    """Normalised word runs of MIN_PHRASE_WORDS words or more."""
+    words = _norm(text).split()
+    return {" ".join(words[i:i + MIN_PHRASE_WORDS]) for i in range(len(words) - MIN_PHRASE_WORDS + 1)}
+
+
+def _reused_phrase(reply: str, earlier: list[str]) -> str | None:
+    """A long phrase this reply shares with an earlier one, or None.
+
+    Catches tics that live inside fresh sentences ("feels like a conversation you
+    want to keep" re-answered at turns 5/6/9): no sentence matches, but the phrase
+    keeps coming back. Returns the first offending phrase for the retry note.
+    """
+    said: set[str] = set()
+    for old in earlier:
+        said |= _grams(old)
+    hits = _grams(reply) & said
+    return sorted(hits)[0] if hits else None
+
+
 def _fresh_fragments(reply: str, earlier: list[str]) -> str | None:
     """The reply with every fragment already said this session removed.
 
@@ -158,6 +188,8 @@ def _copy_sources(reply: str, earlier: list[str]) -> list[str]:
         old_words = set(old_norm.split())
         if old_norm == norm or (_sentences(old) & shared):
             sources.append(old)
+        elif _reused_phrase(reply, [old]):
+            sources.append(old)
         elif (len(words) >= MIN_WORDS_FOR_SIMILAR and len(old_words) >= MIN_WORDS_FOR_SIMILAR
               and len(words & old_words) / len(words | old_words) >= SIMILAR_THRESHOLD):
             sources.append(old)
@@ -165,8 +197,8 @@ def _copy_sources(reply: str, earlier: list[str]) -> list[str]:
 
 
 def _reason(note: str) -> str:
-    return {REPEAT_NOTE: "repeat", PIRATE_NOTE: "pirate", CLOSER_NOTE: "closer",
-            HABIT_NOTE: "habit", IDENTITY_NOTE: "identity",
+    return {REPEAT_NOTE: "repeat", PHRASE_NOTE: "phrase", PIRATE_NOTE: "pirate",
+            CLOSER_NOTE: "closer", HABIT_NOTE: "habit", IDENTITY_NOTE: "identity",
             IDENTITY_QUOTE_NOTE: "identity-quote"}[note]
 
 
@@ -213,6 +245,10 @@ def repeat_flags(reply: str, history: list[dict], user_text: str) -> list[str]:
         flags.append("copy")
     if _reuses_sentence(reply, earlier):
         flags.append("sentence-reuse")
+    # Phrase-reuse is the weak signal: a reused sentence contains a reused phrase,
+    # so only report it when nothing stronger fired.
+    if not flags and _reused_phrase(reply, earlier):
+        flags.append("phrase-reuse")
     return flags
 
 
@@ -305,6 +341,8 @@ class Companion:
             if not pirate_ok and is_pirate(reply):
                 self.last_regens.append({"reason": "fallback", "replaced": reply})
                 reply = PIRATE_FALLBACK
+            # A reused phrase is a tic, not a copy: after retries it ships as-is. The
+            # attempts are in last_regens, so the eval still shows what kept firing.
         stripped = strip_stock_closer(reply)
         if stripped:
             reply = stripped
@@ -317,6 +355,9 @@ class Companion:
         """Return the prompt note for a reply that must be regenerated, or None if it is fine."""
         if _is_near_copy(reply, earlier) or _reuses_sentence(reply, earlier):
             return REPEAT_NOTE
+        phrase = _reused_phrase(reply, earlier)
+        if phrase is not None:
+            return PHRASE_NOTE
         if not self.character.allow_pirate and is_pirate(reply):
             return PIRATE_NOTE
         if not strip_stock_closer(reply) and STOCK_CLOSER.search(reply):

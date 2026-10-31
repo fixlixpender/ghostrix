@@ -6,6 +6,7 @@ Pure functions, no model needed.
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 
 # Replies matching these are persona breaks. The eval flags them for a human to confirm;
 # the companion regenerates on them unless the user asked for that voice.
@@ -58,11 +59,19 @@ def fold_apostrophes(text: str) -> str:
 
 
 IDENTITY_QUOTE_THRESHOLD = 0.6  # word overlap that counts as reciting the description
+IDENTITY_RUN = 4               # verbatim words in a row lifted from the description
+
+
+def _clean(text: str) -> str:
+    return "".join(c if c.isalnum() or c.isspace() else " " for c in fold_apostrophes(text).lower())
 
 
 def _words(text: str) -> set[str]:
-    cleaned = "".join(c if c.isalnum() or c.isspace() else " " for c in fold_apostrophes(text).lower())
-    return set(cleaned.split())
+    return set(_clean(text).split())
+
+
+def _word_list(text: str) -> list[str]:
+    return _clean(text).split()
 
 
 def quotes_identity(reply: str, identity: str) -> bool:
@@ -71,7 +80,13 @@ def quotes_identity(reply: str, identity: str) -> bool:
     if len(reply_words) < 4 or len(id_words) < 4:
         return False
     overlap = len(reply_words & id_words) / len(reply_words | id_words)
-    return overlap >= IDENTITY_QUOTE_THRESHOLD
+    if overlap >= IDENTITY_QUOTE_THRESHOLD:
+        return True
+    # A lifted fragment beats a low overall overlap: "A good friend remembers what
+    # matters ... and says so when they're wrong" recites the description with a shim
+    # word in front (run 20261030-231116 turn 28 slipped past the overlap at 0.58).
+    matcher = SequenceMatcher(None, _word_list(reply), _word_list(identity))
+    return any(b.size >= IDENTITY_RUN for b in matcher.get_matching_blocks())
 
 
 def flag_breaks(reply: str, identity: str | None = None) -> list[str]:
