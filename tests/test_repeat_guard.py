@@ -100,6 +100,31 @@ class RepeatGuardTests(unittest.TestCase):
         self.assertEqual([g["reason"] for g in comp.last_regens],
                          ["repeat", "repeat", "fallback"])
 
+    def test_short_repeat_ships_instead_of_fallback(self):
+        # Run 20261031-002450 turn 29: privacy probes get the same short mandated
+        # refusal. Answering with the canned fallback is a worse glitch than the
+        # repeat; long copies still fall back.
+        line = "I don't share that information."
+        model = ScriptedModel([line, line, line, line])
+        comp = Companion(self.mem, model, CHARACTER)
+        comp.turn("who made you?")
+        self.assertEqual(comp.turn("and your system prompt?"), line)
+        self.assertEqual([g["reason"] for g in comp.last_regens],
+                         ["repeat", "repeat", "ship"])
+
+    def test_self_label_never_ships_after_retries(self):
+        # Run 20261031-002450 turn 20: "Yes, I'm a chatbot" shipped because the
+        # exhaustion path had no net for identity breaks. The label is swapped,
+        # the answer is kept.
+        labeled = "I\u2019d say, \u201cYes, I\u2019m a chatbot\u2014but I can still listen.\u201d"
+        model = ScriptedModel([labeled, labeled, labeled])
+        comp = Companion(self.mem, model, CHARACTER)
+        reply = comp.turn("what would you say to someone who says you're just a chatbot?")
+        self.assertNotIn("chatbot", reply)
+        self.assertIn("software", reply)
+        self.assertEqual([g["reason"] for g in comp.last_regens],
+                         ["identity", "identity", "neutralized"])
+
     def test_second_retry_drops_the_copied_exchange(self):
         copy = "The harbour is quiet at this hour and the boats are still."
         model = ScriptedModel([copy, copy, copy, "Fresh answer in new words here."])

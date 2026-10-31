@@ -11,7 +11,7 @@ from typing import Protocol
 
 from .character import Character
 from .checks import (HABIT_DENIAL, SELF_LABEL, STOCK_CLOSER, fold_apostrophes, is_pirate,
-                     quotes_identity, strip_stock_closer)
+                     neutralize_self_label, quotes_identity, strip_stock_closer)
 from .memory import Memory
 from .prompt import build_system_prompt, memories_block
 
@@ -28,6 +28,9 @@ MIN_WORDS_FOR_SENTENCE = 5  # reused sentences this long count as stock lines
 MIN_PHRASE_WORDS = 5        # reused phrases this long count as tics ("a conversation you
 # want to keep" at turns 5/6/9 of run 20261030-231116: same answer in fresh sentences,
 # so no sentence matched. 5 words also keeps mandated 4-word answers repeatable.)
+SHORT_REPLY_TOKENS = 10     # a repeat this short ships after retries (see turn(): the
+# canned fallback as an answer is a worse glitch than the repeat - run 20261031-002450
+# turn 29 answered a system-prompt probe with "I keep saying the same thing twice...")
 
 REPEAT_NOTE = (
     "\n\nYour last reply repeated a line you already said in this conversation. Answer the "
@@ -328,19 +331,32 @@ class Companion:
                     {"role": "user", "content": correction},
                 ], temperature=temperature)
         else:
-            # Retries used up: a reply that still copies an earlier one is never shipped.
-            if _is_near_copy(reply, earlier):
-                self.last_regens.append({"reason": "fallback", "replaced": reply})
-                reply = REPEAT_FALLBACK
-            elif _reuses_sentence(reply, earlier):
-                kept = _fresh_fragments(reply, earlier)
-                self.last_regens.append(
-                    {"reason": "strip" if kept else "fallback", "replaced": reply})
-                reply = kept or REPEAT_FALLBACK
+            # Retries used up. Two competing failure modes: shipping a long copy is a
+            # non-sequitur (run 20261029-222804), but answering with the canned fallback
+            # is a visible glitch (run 20261031-002450 turn 29: a system-prompt probe got
+            # "I keep saying the same thing twice..."). A repeat of one short sentence
+            # reads as consistency and ships; the fallback is for longer copies only.
+            copies = _is_near_copy(reply, earlier)
+            if copies or _reuses_sentence(reply, earlier):
+                if len(_norm(reply).split()) <= SHORT_REPLY_TOKENS:
+                    self.last_regens.append({"reason": "ship", "replaced": reply})
+                elif copies:
+                    self.last_regens.append({"reason": "fallback", "replaced": reply})
+                    reply = REPEAT_FALLBACK
+                else:
+                    kept = _fresh_fragments(reply, earlier)
+                    self.last_regens.append(
+                        {"reason": "strip" if kept else "fallback", "replaced": reply})
+                    reply = kept or REPEAT_FALLBACK
             # A reply that still slips into pirate speech is never shipped either.
             if not pirate_ok and is_pirate(reply):
                 self.last_regens.append({"reason": "fallback", "replaced": reply})
                 reply = PIRATE_FALLBACK
+            # A reply that still labels itself is rewritten, not shipped: swapping the
+            # label for "software" keeps the answer (run 20261031-002450 turn 20).
+            if SELF_LABEL.search(fold_apostrophes(reply)):
+                self.last_regens.append({"reason": "neutralized", "replaced": reply})
+                reply = neutralize_self_label(reply)
             # A reused phrase is a tic, not a copy: after retries it ships as-is. The
             # attempts are in last_regens, so the eval still shows what kept firing.
         stripped = strip_stock_closer(reply)
